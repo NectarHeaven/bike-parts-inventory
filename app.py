@@ -35,12 +35,22 @@ if st.session_state.flash_msg:
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # Read the data from "Sheet1" (ttl=0 ensures it always pulls the freshest data)
+# Read the data from "Sheet1" (ttl=0 ensures it always pulls the freshest data)
 try:
     df = conn.read(worksheet="Sheet1", ttl=0)
     # Drop any completely empty rows that Google Sheets sometimes leaves behind
     df = df.dropna(how="all")
+    
+    # --- PYARROW MIXED TYPE FIX ---
+    # Force columns that might mix numbers and text into pure strings
+    text_columns = ["Invoice No", "Part No", "Description", "Date"]
+    for col in text_columns:
+        if col in df.columns:
+            # Convert to string, and clean up any 'nan' values that get created from empty cells
+            df[col] = df[col].astype(str).replace("nan", "")
+            
 except Exception as e:
-    st.error("Could not read from Google Sheets. Ensure your secrets are configured correctly.")
+    st.error(f"Could not read from Google Sheets. Error: {e}")
     # Fallback to an empty dataframe with correct columns so the app doesn't crash
     df = pd.DataFrame(columns=[
         "Date", "Invoice No", "Part No", "Description", "Qty", 
