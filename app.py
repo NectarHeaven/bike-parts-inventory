@@ -35,18 +35,16 @@ if st.session_state.flash_msg:
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # Read the data from "Sheet1" (ttl=0 ensures it always pulls the freshest data)
-# Read the data from "Sheet1" (ttl=0 ensures it always pulls the freshest data)
 try:
     df = conn.read(worksheet="Sheet1", ttl=0)
     # Drop any completely empty rows that Google Sheets sometimes leaves behind
     df = df.dropna(how="all")
     
-    # --- PYARROW MIXED TYPE FIX ---
-    # Force columns that might mix numbers and text into pure strings
-    text_columns = ["Invoice No", "Part No", "Description", "Date"]
+    # --- FIX: PYARROW MIXED TYPE ERROR ---
+    # Force text-based columns into purely string format so Apache Arrow doesn't crash
+    text_columns = ["Date", "Invoice No", "Part No", "Description"]
     for col in text_columns:
         if col in df.columns:
-            # Convert to string, and clean up any 'nan' values that get created from empty cells
             df[col] = df[col].astype(str).replace("nan", "")
             
 except Exception as e:
@@ -149,7 +147,7 @@ elif page == "Add New Bill":
             total_landed_cost = unit_landed_cost * final_qty
             
             new_item = {
-                "Date": inv_date,
+                "Date": str(inv_date), # --- FIX: Forced to string ---
                 "Invoice No": str(inv_no).strip().upper(),
                 "Part No": str(part_no).strip().upper() if part_no else "",
                 "Description": str(desc).strip().upper(),
@@ -174,7 +172,6 @@ elif page == "Add New Bill":
         col_s1, col_s2 = st.columns(2)
         with col_s1:
             if st.button("💾 Save Invoice to Database", type="primary"):
-                # Append pending items to the dataframe fetched from Google Sheets
                 updated_df = pd.concat([df, pending_df], ignore_index=True)
                 save_data(updated_df)
                 st.session_state.flash_msg = f"Invoice {inv_no.strip().upper()} saved successfully!"
@@ -229,7 +226,6 @@ elif page == "Manage Inventory":
                     
                     col_u1, col_u2, col_u3, col_u4 = st.columns(4)
                     with col_u1:
-                        # Convert date string from GSheets back to date object if necessary for the widget
                         try:
                             date_val = pd.to_datetime(record['Date']).date()
                         except:
@@ -255,7 +251,7 @@ elif page == "Manage Inventory":
                     st.info(f"**Live Cost Preview:** Unit Landed: ₹ {preview_unit:.2f} &nbsp;&nbsp;|&nbsp;&nbsp; Total Landed: ₹ {preview_total:.2f}")
 
                     if st.button("💾 Save Updates", type="primary"):
-                        df.at[idx_to_modify, 'Date'] = upd_date
+                        df.at[idx_to_modify, 'Date'] = str(upd_date) # --- FIX: Forced to string ---
                         df.at[idx_to_modify, 'Invoice No'] = str(upd_inv).strip().upper()
                         df.at[idx_to_modify, 'Part No'] = str(upd_part).strip().upper()
                         df.at[idx_to_modify, 'Description'] = str(upd_desc).strip().upper()
