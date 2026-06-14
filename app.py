@@ -99,8 +99,8 @@ elif page == "Add Entries (Direct Commit)":
     with col1:
         inv_date = st.date_input("Date", value=date.today())
     with col2:
-        # Defaults to "CASH-BILL"
-        inv_no = st.text_input("Invoice No", value="CASH-BILL")
+        # Using placeholder makes it directly changeable without manual deleting!
+        inv_no_input = st.text_input("Invoice No", placeholder="CASH-BILL", key=f"p_inv_{st.session_state.clear_key}")
     with col3:
         part_no = st.text_input("Part No", key=f"p_no_{st.session_state.clear_key}")
     with col4:
@@ -113,8 +113,11 @@ elif page == "Add Entries (Direct Commit)":
     st.markdown("---")
     
     if st.button("💾 Commit directly to Google Sheets", type="primary"):
-        if not inv_no or not part_name or mrp is None or mrp <= 0:
-            st.markdown("<p class='error-text'>Missing Info: Invoice No, Part Name, and valid MRP are required.</p>", unsafe_allow_html=True)
+        # If the user left Invoice No empty, automatically fall back to "CASH-BILL"
+        final_inv_no = inv_no_input.strip() if inv_no_input.strip() != "" else "CASH-BILL"
+        
+        if not part_name or mrp is None or mrp <= 0:
+            st.markdown("<p class='error-text'>Missing Info: Part Name and valid MRP are required.</p>", unsafe_allow_html=True)
         else:
             final_qty = qty if qty is not None else 1
             total_price = final_qty * mrp
@@ -122,7 +125,7 @@ elif page == "Add Entries (Direct Commit)":
             # Format single item into a dictionary record
             new_item = {
                 "Date": str(inv_date),
-                "Invoice No": str(inv_no).strip().upper(),
+                "Invoice No": str(final_inv_no).upper(),
                 "Part No": str(part_no).strip().upper(),
                 "Part Name": str(part_name).strip().upper(),
                 "Qty": int(final_qty),
@@ -143,7 +146,6 @@ elif page == "Add Entries (Direct Commit)":
             st.session_state.flash_msg = f"Successfully saved entry for {new_item['Part Name']}!"
             st.session_state.clear_key += 1
             st.rerun()
-
 # --- PAGE 3: MANAGE REGISTRY (UPDATE/DELETE) ---
 elif page == "Manage Registry":
     st.title("🛠️ Update or Delete Records")
