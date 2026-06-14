@@ -153,22 +153,57 @@ elif page == "Manage Registry":
     if df.empty:
         st.markdown("**No records to manage.**")
     else:
-        st.markdown("### Step 1: Search for the Record")
-        search_term = st.text_input("Search by Date, Invoice, Part No, or Part Name").strip().upper()
+        st.markdown("### Step 1: Filter & Search for the Record")
         
+        # Create side-by-side filters
+        col_f1, col_f2 = st.columns([1.5, 2.5])
+        
+        with col_f1:
+            # Safely handle minimum and maximum dates from your existing data
+            try:
+                df['Parsed_Date'] = pd.to_datetime(df['Date']).dt.date
+                min_date = df['Parsed_Date'].min()
+                max_date = df['Parsed_Date'].max()
+                if pd.isna(min_date): min_date = date.today()
+                if pd.isna(max_date): max_date = date.today()
+            except:
+                min_date = date.today()
+                max_date = date.today()
+                df['Parsed_Date'] = date.today()
+
+            date_range = st.date_input(
+                "Filter by Date Range (From - To)",
+                value=(min_date, max_date),
+                max_value=date.today()
+            )
+            
+        with col_f2:
+            search_term = st.text_input("Search by Invoice No, Part No, or Part Name").strip().upper()
+        
+        # --- APPLY FILTERS ---
+        results = df.copy()
+        
+        # Apply date range filter (ensuring user completed selecting both start & end dates)
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            start_date, end_date = date_range
+            results = results[(results['Parsed_Date'] >= start_date) & (results['Parsed_Date'] <= end_date)]
+            
+        # Apply text search filter
         if search_term:
             mask = (
-                df['Date'].astype(str).str.contains(search_term, case=False) | 
-                df['Invoice No'].astype(str).str.contains(search_term, case=False) | 
-                df['Part No'].astype(str).str.contains(search_term, case=False) | 
-                df['Part Name'].astype(str).str.contains(search_term, case=False)
+                results['Invoice No'].astype(str).str.contains(search_term, case=False) | 
+                results['Part No'].astype(str).str.contains(search_term, case=False) | 
+                results['Part Name'].astype(str).str.contains(search_term, case=False)
             )
-            results = df[mask]
-        else:
-            results = df
+            results = results[mask]
+            
+        # Drop temporary parsing column before rendering
+        if 'Parsed_Date' in results.columns:
+            results = results.drop(columns=['Parsed_Date'])
 
+        # --- DISPLAY RESULTS & MODIFY ---
         if results.empty:
-            st.warning("No records found matching your search.")
+            st.warning("No records found matching your filters.")
         else:
             st.dataframe(results, use_container_width=True)
             
@@ -194,7 +229,7 @@ elif page == "Manage Registry":
                             date_val = pd.to_datetime(record['Date']).date()
                         except:
                             date_val = date.today()
-                        upd_date = st.date_input("Date", value=date_val)
+                        upd_date = st.date_input("Date", value=date_val, key="upd_d")
                         upd_inv = st.text_input("Invoice No", value=record['Invoice No'])
                     with col_u2:
                         upd_no = st.text_input("Part No", value=record['Part No'])
@@ -217,6 +252,10 @@ elif page == "Manage Registry":
                         df.at[idx_to_modify, 'MRP'] = round(float(upd_mrp), 2)
                         df.at[idx_to_modify, 'Total Price'] = round(float(preview_total), 2)
                         
+                        # Strip parsing column before global file sync
+                        if 'Parsed_Date' in df.columns:
+                            df = df.drop(columns=['Parsed_Date'])
+                            
                         save_data(df)
                         st.session_state.flash_msg = "Record updated successfully!"
                         st.rerun()
@@ -224,32 +263,68 @@ elif page == "Manage Registry":
                 with tab2:
                     st.error(f"⚠️ Are you sure you want to delete **{record['Part Name']}** from Invoice **{record['Invoice No']}**?")
                     if st.button("🚨 Yes, Delete This Record"):
-                        updated_df = df.drop(index=idx_to_modify).reset_index(drop=True)
-                        save_data(updated_df)
+                        # Ensure parsing column is missing so schema stays standard
+                        clean_df = df.drop(index=idx_to_modify).reset_index(drop=True)
+                        if 'Parsed_Date' in clean_df.columns:
+                            clean_df = clean_df.drop(columns=['Parsed_Date'])
+                        save_data(clean_df)
                         st.session_state.flash_msg = "Record permanently deleted!"
                         st.rerun()
-
 # --- PAGE 4: SEARCH & DATABASE ---
 elif page == "Search / Database":
-    st.title("🔍 Search & Full Registry")
+    st.title("🔍 Advanced Search & Full Registry")
     
-    search_term = st.text_input("Search by Date, Invoice No, Part No, or Part Name").strip().upper()
+    # Create side-by-side filters
+    col_f1, col_f2 = st.columns([1.5, 2.5])
     
+    with col_f1:
+        try:
+            df['Parsed_Date'] = pd.to_datetime(df['Date']).dt.date
+            min_date = df['Parsed_Date'].min()
+            max_date = df['Parsed_Date'].max()
+            if pd.isna(min_date): min_date = date.today()
+            if pd.isna(max_date): max_date = date.today()
+        except:
+            min_date = date.today()
+            max_date = date.today()
+            df['Parsed_Date'] = date.today()
+
+        date_range = st.date_input(
+            "Filter by Date Range (From - To)",
+            value=(min_date, max_date),
+            max_value=date.today(),
+            key="search_date_range"
+        )
+        
+    with col_f2:
+        search_term = st.text_input("Search by Invoice No, Part No, or Part Name", key="search_text_term").strip().upper()
+    
+    # --- APPLY FILTERS ---
+    results = df.copy()
+    
+    # Apply date range filter
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        start_date, end_date = date_range
+        results = results[(results['Parsed_Date'] >= start_date) & (results['Parsed_Date'] <= end_date)]
+        
+    # Apply text search filter
     if search_term:
         mask = (
-            df['Date'].astype(str).str.contains(search_term, case=False) | 
-            df['Invoice No'].astype(str).str.contains(search_term, case=False) | 
-            df['Part No'].astype(str).str.contains(search_term, case=False) | 
-            df['Part Name'].astype(str).str.contains(search_term, case=False)
+            results['Invoice No'].astype(str).str.contains(search_term, case=False) | 
+            results['Part No'].astype(str).str.contains(search_term, case=False) | 
+            results['Part Name'].astype(str).str.contains(search_term, case=False)
         )
-        results = df[mask]
+        results = results[mask]
         
-        if results.empty:
-            st.markdown("**No records found.**")
-        else:
-            st.dataframe(results, use_container_width=True)
-            subtotal = pd.to_numeric(results['Total Price'], errors='coerce').sum()
-            st.success(f"Total Value of Filtered Results: ₹ {subtotal:,.2f}")
+    # Clean up calculation column
+    if 'Parsed_Date' in results.columns:
+        results = results.drop(columns=['Parsed_Date'])
+
+    # --- DISPLAY DATA ---
+    st.markdown("### 📋 Filtered Inventory Results")
+    if results.empty:
+        st.markdown("**No records match the active criteria.**")
     else:
-        st.markdown("### 📋 Complete Inventory Registry")
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(results, use_container_width=True)
+        subtotal = pd.to_numeric(results['Total Price'], errors='coerce').sum()
+        st.success(f"Total Value of Displayed Results: ₹ {subtotal:,.2f}")
