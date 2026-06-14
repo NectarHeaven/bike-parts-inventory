@@ -18,8 +18,6 @@ st.markdown("""
 # --- SESSION STATE INITIALIZATION ---
 if 'flash_msg' not in st.session_state:
     st.session_state.flash_msg = ""
-if 'current_bill_items' not in st.session_state:
-    st.session_state.current_bill_items = []
 if 'clear_key' not in st.session_state:
     st.session_state.clear_key = 0
 
@@ -30,15 +28,15 @@ if st.session_state.flash_msg:
 # --- GOOGLE SHEETS CONNECTION ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Target columns for the new simplified registry
-target_columns = ["Date", "Invoice No", "Part Name", "Qty", "MRP", "Total Price"]
+# Target strict columns matching the new GSheet layout
+target_columns = ["Date", "Invoice No", "Part No", "Part Name", "Qty", "MRP", "Total Price"]
 
 try:
     df = conn.read(worksheet="Sheet1", ttl=0)
     df = df.dropna(how="all")
     
-    # Force text columns to string
-    text_columns = ["Date", "Invoice No", "Part Name"]
+    # Force text columns to string format to prevent PyArrow crashes
+    text_columns = ["Date", "Invoice No", "Part No", "Part Name"]
     for col in text_columns:
         if col in df.columns:
             df[col] = df[col].astype(str).replace("nan", "")
@@ -55,7 +53,7 @@ def save_data(updated_df):
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.title("🏍️ Parts Registry")
 page = st.sidebar.radio("Navigation", [
-    "Dashboard", "Add Entries", "Manage Registry", "Search / Database"
+    "Dashboard", "Add Entries (Direct Commit)", "Manage Registry", "Search / Database"
 ])
 
 # --- PAGE 1: DASHBOARD ---
@@ -92,63 +90,59 @@ if page == "Dashboard":
                 top_parts['Total Price'] = top_parts['Total Price'].apply(lambda x: f"₹ {x:,.2f}")
                 st.dataframe(top_parts, use_container_width=True, hide_index=True)
 
-# --- PAGE 2: ADD ENTRIES ---
-elif page == "Add Entries":
-    st.title("➕ Add Single-Line Entry")
+# --- PAGE 2: ADD ENTRIES (DIRECT COMMIT) ---
+elif page == "Add Entries (Direct Commit)":
+    st.title("➕ Direct Commit Registry Entry")
     
-    st.markdown("### 1. Item Information")
-    col1, col2, col3, col4, col5 = st.columns([1.2, 1.5, 2.5, 1, 1.2])
+    col1, col2, col3, col4, col5, col6 = st.columns([1.2, 1.5, 1.5, 2.5, 1, 1.2])
     
     with col1:
         inv_date = st.date_input("Date", value=date.today())
     with col2:
-        inv_no = st.text_input("Invoice No")
+        # Defaults to "CASH-BILL"
+        inv_no = st.text_input("Invoice No", value="CASH-BILL")
     with col3:
-        part_name = st.text_input("Part Name", key=f"p_name_{st.session_state.clear_key}")
+        part_no = st.text_input("Part No", key=f"p_no_{st.session_state.clear_key}")
     with col4:
-        qty = st.number_input("Qty", min_value=1, step=1, value=None, placeholder="1", key=f"p_qty_{st.session_state.clear_key}")
+        part_name = st.text_input("Part Name", key=f"p_name_{st.session_state.clear_key}")
     with col5:
+        qty = st.number_input("Qty", min_value=1, step=1, value=None, placeholder="1", key=f"p_qty_{st.session_state.clear_key}")
+    with col6:
         mrp = st.number_input("MRP (₹)", min_value=0.0, step=1.0, value=None, placeholder="0.00", key=f"p_mrp_{st.session_state.clear_key}")
         
-    if st.button("Add Item to List", type="secondary"):
+    st.markdown("---")
+    
+    if st.button("💾 Commit directly to Google Sheets", type="primary"):
         if not inv_no or not part_name or mrp is None or mrp <= 0:
             st.markdown("<p class='error-text'>Missing Info: Invoice No, Part Name, and valid MRP are required.</p>", unsafe_allow_html=True)
         else:
             final_qty = qty if qty is not None else 1
             total_price = final_qty * mrp
             
+            # Format single item into a dictionary record
             new_item = {
                 "Date": str(inv_date),
                 "Invoice No": str(inv_no).strip().upper(),
+                "Part No": str(part_no).strip().upper(),
                 "Part Name": str(part_name).strip().upper(),
                 "Qty": int(final_qty),
                 "MRP": round(float(mrp), 2),
                 "Total Price": round(float(total_price), 2)
             }
-            st.session_state.current_bill_items.append(new_item)
+            
+            # Convert single dictionary directly to DataFrame row
+            new_row_df = pd.DataFrame([new_item])
+            
+            # Combine directly with existing data
+            updated_df = pd.concat([df, new_row_df], ignore_index=True)
+            updated_df = updated_df.reindex(columns=target_columns)
+            
+            # Write immediately to Google Sheets
+            save_data(updated_df)
+            
+            st.session_state.flash_msg = f"Successfully saved entry for {new_item['Part Name']}!"
             st.session_state.clear_key += 1
             st.rerun()
-
-    if st.session_state.current_bill_items:
-        st.markdown("### 2. Pending Additions")
-        pending_df = pd.DataFrame(st.session_state.current_bill_items)
-        st.dataframe(pending_df, use_container_width=True)
-        
-        col_s1, col_s2 = st.columns(2)
-        with col_s1:
-            if st.button("💾 Save to Google Sheets", type="primary"):
-                # Clean up existing df to ensure uniform column types before contact
-                updated_df = pd.concat([df, pending_df], ignore_index=True)
-                # Re-index to enforce strict column structure matching target_columns
-                updated_df = updated_df.reindex(columns=target_columns)
-                save_data(updated_df)
-                st.session_state.flash_msg = "Items saved successfully!"
-                st.session_state.current_bill_items = []
-                st.rerun()
-        with col_s2:
-            if st.button("❌ Clear Pending List"):
-                st.session_state.current_bill_items = []
-                st.rerun()
 
 # --- PAGE 3: MANAGE REGISTRY (UPDATE/DELETE) ---
 elif page == "Manage Registry":
@@ -158,12 +152,13 @@ elif page == "Manage Registry":
         st.markdown("**No records to manage.**")
     else:
         st.markdown("### Step 1: Search for the Record")
-        search_term = st.text_input("Search by Date, Invoice, or Part Name").strip().upper()
+        search_term = st.text_input("Search by Date, Invoice, Part No, or Part Name").strip().upper()
         
         if search_term:
             mask = (
                 df['Date'].astype(str).str.contains(search_term, case=False) | 
                 df['Invoice No'].astype(str).str.contains(search_term, case=False) | 
+                df['Part No'].astype(str).str.contains(search_term, case=False) | 
                 df['Part Name'].astype(str).str.contains(search_term, case=False)
             )
             results = df[mask]
@@ -190,7 +185,7 @@ elif page == "Manage Registry":
                 
                 with tab1:
                     st.markdown(f"**Updating:** {record['Part Name']}")
-                    col_u1, col_u2, col_u3, col_u4 = st.columns(4)
+                    col_u1, col_u2, col_u3, col_u4, col_u5 = st.columns(5)
                     
                     with col_u1:
                         try:
@@ -200,10 +195,12 @@ elif page == "Manage Registry":
                         upd_date = st.date_input("Date", value=date_val)
                         upd_inv = st.text_input("Invoice No", value=record['Invoice No'])
                     with col_u2:
-                        upd_name = st.text_input("Part Name", value=record['Part Name'])
+                        upd_no = st.text_input("Part No", value=record['Part No'])
                     with col_u3:
-                        upd_qty = st.number_input("Qty", min_value=1, value=int(record['Qty']))
+                        upd_name = st.text_input("Part Name", value=record['Part Name'])
                     with col_u4:
+                        upd_qty = st.number_input("Qty", min_value=1, value=int(record['Qty']))
+                    with col_u5:
                         upd_mrp = st.number_input("MRP (₹)", min_value=0.0, value=float(record['MRP']))
 
                     preview_total = upd_qty * upd_mrp
@@ -212,6 +209,7 @@ elif page == "Manage Registry":
                     if st.button("💾 Save Updates", type="primary"):
                         df.at[idx_to_modify, 'Date'] = str(upd_date)
                         df.at[idx_to_modify, 'Invoice No'] = str(upd_inv).strip().upper()
+                        df.at[idx_to_modify, 'Part No'] = str(upd_no).strip().upper()
                         df.at[idx_to_modify, 'Part Name'] = str(upd_name).strip().upper()
                         df.at[idx_to_modify, 'Qty'] = int(upd_qty)
                         df.at[idx_to_modify, 'MRP'] = round(float(upd_mrp), 2)
@@ -233,12 +231,13 @@ elif page == "Manage Registry":
 elif page == "Search / Database":
     st.title("🔍 Search & Full Registry")
     
-    search_term = st.text_input("Search by Date, Invoice No, or Part Name").strip().upper()
+    search_term = st.text_input("Search by Date, Invoice No, Part No, or Part Name").strip().upper()
     
     if search_term:
         mask = (
             df['Date'].astype(str).str.contains(search_term, case=False) | 
             df['Invoice No'].astype(str).str.contains(search_term, case=False) | 
+            df['Part No'].astype(str).str.contains(search_term, case=False) | 
             df['Part Name'].astype(str).str.contains(search_term, case=False)
         )
         results = df[mask]
