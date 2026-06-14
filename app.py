@@ -28,7 +28,7 @@ if st.session_state.flash_msg:
 # --- GOOGLE SHEETS CONNECTION ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Target strict columns matching the new GSheet layout
+# Target strict 7 columns matching the GSheet layout
 target_columns = ["Date", "Invoice No", "Part No", "Part Name", "Qty", "MRP", "Total Price"]
 
 try:
@@ -99,7 +99,7 @@ elif page == "Add Entries (Direct Commit)":
     with col1:
         inv_date = st.date_input("Date", value=date.today())
     with col2:
-        # Using placeholder makes it directly changeable without manual deleting!
+        # Placeholder allows typing right over CASH-BILL immediately
         inv_no_input = st.text_input("Invoice No", placeholder="CASH-BILL", key=f"p_inv_{st.session_state.clear_key}")
     with col3:
         part_no = st.text_input("Part No", key=f"p_no_{st.session_state.clear_key}")
@@ -113,7 +113,7 @@ elif page == "Add Entries (Direct Commit)":
     st.markdown("---")
     
     if st.button("💾 Commit directly to Google Sheets", type="primary"):
-        # If the user left Invoice No empty, automatically fall back to "CASH-BILL"
+        # Fall back to CASH-BILL if left empty
         final_inv_no = inv_no_input.strip() if inv_no_input.strip() != "" else "CASH-BILL"
         
         if not part_name or mrp is None or mrp <= 0:
@@ -122,7 +122,6 @@ elif page == "Add Entries (Direct Commit)":
             final_qty = qty if qty is not None else 1
             total_price = final_qty * mrp
             
-            # Format single item into a dictionary record
             new_item = {
                 "Date": str(inv_date),
                 "Invoice No": str(final_inv_no).upper(),
@@ -133,19 +132,16 @@ elif page == "Add Entries (Direct Commit)":
                 "Total Price": round(float(total_price), 2)
             }
             
-            # Convert single dictionary directly to DataFrame row
             new_row_df = pd.DataFrame([new_item])
-            
-            # Combine directly with existing data
             updated_df = pd.concat([df, new_row_df], ignore_index=True)
             updated_df = updated_df.reindex(columns=target_columns)
             
-            # Write immediately to Google Sheets
             save_data(updated_df)
             
             st.session_state.flash_msg = f"Successfully saved entry for {new_item['Part Name']}!"
             st.session_state.clear_key += 1
             st.rerun()
+
 # --- PAGE 3: MANAGE REGISTRY (UPDATE/DELETE) ---
 elif page == "Manage Registry":
     st.title("🛠️ Update or Delete Records")
@@ -154,12 +150,9 @@ elif page == "Manage Registry":
         st.markdown("**No records to manage.**")
     else:
         st.markdown("### Step 1: Filter & Search for the Record")
-        
-        # Create side-by-side filters
         col_f1, col_f2 = st.columns([1.5, 2.5])
         
         with col_f1:
-            # Safely handle minimum and maximum dates from your existing data
             try:
                 df['Parsed_Date'] = pd.to_datetime(df['Date']).dt.date
                 min_date = df['Parsed_Date'].min()
@@ -180,15 +173,11 @@ elif page == "Manage Registry":
         with col_f2:
             search_term = st.text_input("Search by Invoice No, Part No, or Part Name").strip().upper()
         
-        # --- APPLY FILTERS ---
         results = df.copy()
-        
-        # Apply date range filter (ensuring user completed selecting both start & end dates)
         if isinstance(date_range, tuple) and len(date_range) == 2:
             start_date, end_date = date_range
             results = results[(results['Parsed_Date'] >= start_date) & (results['Parsed_Date'] <= end_date)]
             
-        # Apply text search filter
         if search_term:
             mask = (
                 results['Invoice No'].astype(str).str.contains(search_term, case=False) | 
@@ -197,11 +186,9 @@ elif page == "Manage Registry":
             )
             results = results[mask]
             
-        # Drop temporary parsing column before rendering
         if 'Parsed_Date' in results.columns:
             results = results.drop(columns=['Parsed_Date'])
 
-        # --- DISPLAY RESULTS & MODIFY ---
         if results.empty:
             st.warning("No records found matching your filters.")
         else:
@@ -210,7 +197,14 @@ elif page == "Manage Registry":
             st.markdown("---")
             st.markdown("### Step 2: Select a Record to Modify")
             
-            options = results.index.astype(str) + " | " + results['Invoice No'] + " | " + results['Part Name']
+            # Formats dropdown options with Index | Date | Invoice | Part No | Part Name
+            options = (
+                results.index.astype(str) + " | " + 
+                results['Date'].astype(str) + " | " + 
+                results['Invoice No'] + " | " + 
+                results['Part No'] + " | " + 
+                results['Part Name']
+            )
             selected_record = st.selectbox("Choose a record from the list above:", options, index=None)
             
             if selected_record:
@@ -252,7 +246,6 @@ elif page == "Manage Registry":
                         df.at[idx_to_modify, 'MRP'] = round(float(upd_mrp), 2)
                         df.at[idx_to_modify, 'Total Price'] = round(float(preview_total), 2)
                         
-                        # Strip parsing column before global file sync
                         if 'Parsed_Date' in df.columns:
                             df = df.drop(columns=['Parsed_Date'])
                             
@@ -261,20 +254,19 @@ elif page == "Manage Registry":
                         st.rerun()
 
                 with tab2:
-                    st.error(f"⚠️ Are you sure you want to delete **{record['Part Name']}** from Invoice **{record['Invoice No']}**?")
+                    st.error(f"⚠️ Are you sure you want to delete **{record['Part Name']}**?")
                     if st.button("🚨 Yes, Delete This Record"):
-                        # Ensure parsing column is missing so schema stays standard
                         clean_df = df.drop(index=idx_to_modify).reset_index(drop=True)
                         if 'Parsed_Date' in clean_df.columns:
                             clean_df = clean_df.drop(columns=['Parsed_Date'])
                         save_data(clean_df)
                         st.session_state.flash_msg = "Record permanently deleted!"
                         st.rerun()
+
 # --- PAGE 4: SEARCH & DATABASE ---
 elif page == "Search / Database":
     st.title("🔍 Advanced Search & Full Registry")
     
-    # Create side-by-side filters
     col_f1, col_f2 = st.columns([1.5, 2.5])
     
     with col_f1:
@@ -299,15 +291,11 @@ elif page == "Search / Database":
     with col_f2:
         search_term = st.text_input("Search by Invoice No, Part No, or Part Name", key="search_text_term").strip().upper()
     
-    # --- APPLY FILTERS ---
     results = df.copy()
-    
-    # Apply date range filter
     if isinstance(date_range, tuple) and len(date_range) == 2:
         start_date, end_date = date_range
         results = results[(results['Parsed_Date'] >= start_date) & (results['Parsed_Date'] <= end_date)]
         
-    # Apply text search filter
     if search_term:
         mask = (
             results['Invoice No'].astype(str).str.contains(search_term, case=False) | 
@@ -316,11 +304,9 @@ elif page == "Search / Database":
         )
         results = results[mask]
         
-    # Clean up calculation column
     if 'Parsed_Date' in results.columns:
         results = results.drop(columns=['Parsed_Date'])
 
-    # --- DISPLAY DATA ---
     st.markdown("### 📋 Filtered Inventory Results")
     if results.empty:
         st.markdown("**No records match the active criteria.**")
